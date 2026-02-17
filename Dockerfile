@@ -51,7 +51,7 @@ RUN export APP_INSTALL_ARGS="" && \
       --verbose \
       /home/frappe/frappe-bench && \
     cd /home/frappe/frappe-bench && \
-    echo "{}" > sites/common_site_config.json && \
+    echo '{"socketio_port": 9000, "redis_cache": "redis://localhost:13000", "redis_queue": "redis://localhost:11000", "redis_socketio": "redis://localhost:13000"}' > sites/common_site_config.json && \
     find apps -mindepth 1 -path "*/.git" | xargs rm -fr
 
 # Compilar assets JS/CSS para todas las apps instaladas
