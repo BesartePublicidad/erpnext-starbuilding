@@ -7,7 +7,7 @@ ENV PYTHONUNBUFFERED=1
 USER root
 
 # Instalación de dependencias del sistema optimizada
-# Incluimos build-essential y librerías específicas para evitar recompilaciones costosas
+# nodejs 24.x es requerido para Frappe v16
 RUN apt-get update && apt-get install -y \
     git \
     build-essential \
@@ -42,7 +42,7 @@ RUN apt-get update && apt-get install -y \
     libharfbuzz-dev \
     libfribidi-dev \
     libxcb1-dev \
-    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
     && apt-get install -y nodejs \
     && npm install -g yarn \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
