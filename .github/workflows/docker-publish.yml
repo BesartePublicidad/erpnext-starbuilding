@@ -20,9 +20,26 @@ jobs:
 
     steps:
       # ------------------------------------------------------------------
-      # 0. Swap: Expandir a 10GB para prevenir OOM (exit 167).
-      #    Usamos la action oficial que maneja el /swapfile pre-existente
-      #    en runners Ubuntu de GitHub (fallocate falla si ya está en uso).
+      # 0a. Liberar ~15GB de disco eliminando software preinstalado
+      #     innecesario en el runner. ERPNext build consume ~13-14GB:
+      #     frappe/build image (~4GB) + bench+apps (~5GB) + imagen final (~4GB).
+      #     Sin esto: "No space left on device" al exportar la imagen.
+      # ------------------------------------------------------------------
+      - name: Free disk space (~15GB) before build
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false      # conservar herramientas de CI (node, python, etc.)
+          android: true          # libera ~9GB
+          dotnet: true           # libera ~2GB
+          haskell: true          # libera ~5GB
+          large-packages: false  # no tocar paquetes de sistema (apt)
+          docker-images: true    # libera imágenes Docker pre-cacheadas
+          swap-storage: false    # lo manejamos nosotros en el siguiente step
+
+      # ------------------------------------------------------------------
+      # 0b. Swap: Expandir a 10GB para prevenir OOM (exit 167).
+      #     Usamos la action oficial que maneja el /swapfile pre-existente
+      #     en runners Ubuntu de GitHub (fallocate falla si ya está en uso).
       # ------------------------------------------------------------------
       - name: Expand swap to 10GB to prevent OOM (exit 167)
         uses: pierotofy/set-swap-space@master
@@ -83,11 +100,14 @@ jobs:
           echo "APPS_JSON_BASE64=${APPS_JSON_BASE64}" >> $GITHUB_OUTPUT
           echo "--- apps.json incluido en el build ---"
           cat apps.json
+          echo "--- Espacio en disco disponible ---"
+          df -h
 
       # ------------------------------------------------------------------
       # 6. Build y Push a GHCR
       #    - context: . (raíz del repo, donde están Dockerfile y apps.json)
-      #    - cache GHA para acelerar rebuilds
+      #    - SIN cache GHA: el build de ERPNext llena el disco de 14GB;
+      #      la cache duplica el uso temporal de espacio innecesariamente.
       #    - NODE_OPTIONS limita heap de Node a 4GB (de los 10GB de swap)
       #    - Solo amd64 en runner gratuito (arm64 requiere self-hosted)
       # ------------------------------------------------------------------
@@ -103,6 +123,4 @@ jobs:
             FRAPPE_PATH=https://github.com/frappe/frappe
             FRAPPE_BRANCH=version-16
             APPS_JSON_BASE64=${{ steps.apps_json.outputs.APPS_JSON_BASE64 }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
           platforms: linux/amd64
