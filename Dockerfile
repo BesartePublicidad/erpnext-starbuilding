@@ -1,90 +1,91 @@
-FROM python:3.12-slim-bookworm as builder
+# =============================================================================
+# STAR BUILDING SERVICES - Custom ERPNext v16 Image
+# Patrón: Oficial frappe_docker (layered)
+# Referencia: github.com/frappe/frappe_docker/images/layered/Containerfile
+#
+# INVARIANTES:
+# - NO se ejecuta bench init manualmente sin --apps_path
+# - frappe/build:version-16 ya incluye bench, pip, nvm, node, yarn
+# - frappe/base:version-16 es la imagen runtime limpia
+# - Se usa cp -L para des-referenciar symlinks en assets
+# =============================================================================
 
-# Mitigación OOM y Performance
-ENV PIP_NO_CACHE_DIR=1
-ENV PYTHONUNBUFFERED=1
+# -----------------------------------------------------------------------------
+# STAGE 1: builder
+# Base: frappe/build (tiene todas las herramientas de compilación)
+# Descarga e instala todas las apps desde apps.json en un bench fresco
+# -----------------------------------------------------------------------------
+FROM frappe/build:version-16 AS builder
+
+ARG FRAPPE_PATH=https://github.com/frappe/frappe
+ARG FRAPPE_BRANCH=version-16
+ARG APPS_JSON_BASE64
 
 USER root
 
-# Instalación de dependencias del sistema optimizada
-# nodejs 24.x es requerido para Frappe v16
-RUN apt-get update && apt-get install -y \
-    git \
-    build-essential \
-    pkg-config \
-    python3-dev \
-    python3-venv \
-    software-properties-common \
-    mariadb-client \
-    libmariadb-dev \
-    libmariadb-dev-compat \
-    postgresql-client \
-    libpq-dev \
-    linkchecker \
-    gettext-base \
-    wget \
-    curl \
-    # Dependencias para Assets y PDF
-    libfontconfig \
-    libxrender1 \
-    libxext6 \
-    xvfb \
-    wkhtmltopdf \
-    # Frappe Dependencies (Pillow/Canvas support)
-    libtiff5-dev \
-    libjpeg62-turbo-dev \
-    zlib1g-dev \
-    libfreetype6-dev \
-    liblcms2-dev \
-    libwebp-dev \
-    tcl8.6-dev \
-    tk8.6-dev \
-    libharfbuzz-dev \
-    libfribidi-dev \
-    libxcb1-dev \
-    && curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
-    && apt-get install -y nodejs \
-    && npm install -g yarn \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
-
-# Install bench via pip (cache disabled by ENV)
-RUN pip install frappe-bench
-
-# Crear usuario Frappe
-RUN groupadd -g 1000 frappe && useradd -u 1000 -g frappe -m -d /home/frappe frappe
+# Decodificar apps.json desde ARG base64
+RUN if [ -n "${APPS_JSON_BASE64}" ]; then \
+      mkdir -p /opt/frappe && \
+      echo "${APPS_JSON_BASE64}" | base64 -d > /opt/frappe/apps.json && \
+      echo "--- apps.json decodificado ---" && \
+      cat /opt/frappe/apps.json; \
+    fi
 
 USER frappe
-WORKDIR /home/frappe
 
-# Bench Init optimizado
-# Usamos --frappe-branch para descargar directamente la versión correcta (ahorra bandwidth y tiempo)
-RUN bench init --frappe-branch version-16 \
-    --skip-redis-config-generation \
-    --skip-assets \
-    --python python3 \
-    frappe-bench
+# Control de memoria para Node (crítico en runners con RAM limitada)
+ENV NODE_OPTIONS="--max-old-space-size=4096"
+
+# bench init con --apps_path instala frappe + todas las apps del JSON en un solo paso
+# --no-procfile, --no-backups y --skip-redis-config-generation reducen trabajo innecesario
+RUN export APP_INSTALL_ARGS="" && \
+    if [ -n "${APPS_JSON_BASE64}" ]; then \
+      export APP_INSTALL_ARGS="--apps_path=/opt/frappe/apps.json"; \
+    fi && \
+    bench init ${APP_INSTALL_ARGS} \
+      --frappe-branch=${FRAPPE_BRANCH} \
+      --frappe-path=${FRAPPE_PATH} \
+      --no-procfile \
+      --no-backups \
+      --skip-redis-config-generation \
+      --verbose \
+      /home/frappe/frappe-bench && \
+    cd /home/frappe/frappe-bench && \
+    echo "{}" > sites/common_site_config.json && \
+    find apps -mindepth 1 -path "*/.git" | xargs rm -fr
+
+# Compilar assets JS/CSS para todas las apps instaladas
+# NODE_OPTIONS ya está seteado arriba
+RUN cd /home/frappe/frappe-bench && bench build --hard-link
+
+# Des-referenciar symlinks en assets ANTES de copiar al stage final
+# cp -L es OBLIGATORIO para evitar broken symlinks en la imagen Alpine/runtime
+RUN cp -rL /home/frappe/frappe-bench/sites/assets /tmp/assets-resolved
+
+# -----------------------------------------------------------------------------
+# STAGE 2: backend (imagen final de producción)
+# Base: frappe/base (runtime limpio sin herramientas de compilación)
+# -----------------------------------------------------------------------------
+FROM frappe/base:version-16 AS backend
+
+USER frappe
+
+# Copiar el bench completo (apps + virtualenv python + configuración)
+COPY --from=builder --chown=frappe:frappe \
+    /home/frappe/frappe-bench \
+    /home/frappe/frappe-bench
+
+# Reemplazar assets con la versión des-referenciada (sin symlinks rotos)
+RUN rm -rf /home/frappe/frappe-bench/sites/assets
+COPY --from=builder --chown=frappe:frappe \
+    /tmp/assets-resolved \
+    /home/frappe/frappe-bench/sites/assets
 
 WORKDIR /home/frappe/frappe-bench
 
-# Instalación de Apps (Capa separada para caché)
-COPY --chown=frappe:frappe apps.json apps.json
-
-# Instalación explícita de Apps
-RUN bench get-app --branch version-16 erpnext --resolve-deps && \
-    bench get-app --branch version-16 hrms && \
-    bench get-app --branch main crm && \
-    bench get-app --branch develop payments && \
-    bench get-app --branch main offsite_backups
-
-# Build de Assets (Suele consumir mucha RAM, yarn cache limpio)
-RUN yarn config set cache-folder /tmp/yarn-cache && \
-    bench build && \
-    rm -rf /tmp/yarn-cache
-
-# Limpieza final de imagen (Multi-stage preparation)
-RUN find . -name "*.pyc" -delete && \
-    find . -name "__pycache__" -delete && \
-    rm -rf apps/*/node_modules
-
-# Exponer gunicorn
-CMD ["/home/frappe/frappe-bench/env/bin/gunicorn", "-b", "0.0.0.0:8000", "-w", "4", "-t", "120", "--worker-tmp-dir", "/dev/shm", "--gthread", "--worker-class", "gthread", "--threads", "4", "frappe.app:application"]
+# Volúmenes estándar de frappe_docker
+VOLUME [ \
+  "/home/frappe/frappe-bench/sites", \
+  "/home/frappe/frappe-bench/sites/assets", \
+  "/home/frappe/frappe-bench/logs" \
+]

@@ -17,6 +17,15 @@ jobs:
       packages: write
 
     steps:
+      - name: Set up Swap Space
+        run: |
+          sudo fallocate -l 10G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          echo "Swap enabled:"
+          swapon --show
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -39,6 +48,12 @@ jobs:
             type=raw,value=latest
             type=sha,format=long
 
+      - name: Prepare APPS_JSON_BASE64
+        id: prepare_apps
+        run: |
+          APPS_JSON_CONTENT=$(cat apps.json | base64 -w 0)
+          echo "APPS_JSON_BASE64=$APPS_JSON_CONTENT" >> $GITHUB_ENV
+
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
@@ -46,5 +61,7 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            APPS_JSON_BASE64=${{ env.APPS_JSON_BASE64 }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

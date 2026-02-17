@@ -1,42 +1,18 @@
-{
-    "apps": [
-        {
-            "name": "frappe",
-            "branch": "version-16",
-            "repo": "https://github.com/frappe/frappe"
-        },
-        {
-            "name": "erpnext",
-            "branch": "version-16",
-            "repo": "https://github.com/frappe/erpnext"
-        },
-        {
-            "name": "hrms",
-            "branch": "version-16",
-            "repo": "https://github.com/frappe/hrms"
-        },
-        {
-            "name": "crm",
-            "branch": "main",
-            "repo": "https://github.com/frappe/crm"
-        },
-        {
-            "name": "payments",
-            "branch": "develop",
-            "repo": "https://github.com/frappe/payments"
-        },
-        {
-            "name": "offsite_backups",
-            "branch": "main",
-            "repo": "https://github.com/frappe/offsite_backups"
-        }
-    ],
-    "include_apps": [
-        "frappe",
-        "erpnext",
-        "hrms",
-        "crm",
-        "payments",
-        "offsite_backups"
-    ]
-}
+[
+    {
+        "url": "https://github.com/frappe/hrms",
+        "branch": "version-16"
+    },
+    {
+        "url": "https://github.com/frappe/crm",
+        "branch": "main"
+    },
+    {
+        "url": "https://github.com/frappe/payments",
+        "branch": "develop"
+    },
+    {
+        "url": "https://github.com/frappe/offsite_backups",
+        "branch": "main"
+    }
+]
